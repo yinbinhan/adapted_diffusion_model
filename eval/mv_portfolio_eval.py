@@ -4,6 +4,7 @@ import numpy as np
 import numba
 import scipy
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 from sklearn.covariance import LedoitWolf
 import sys
 import seaborn as sns
@@ -133,57 +134,77 @@ def calculate_objective_constrained(mu, sigma, eta=1, lower_bound=-np.inf, upper
 
 def calculate_all_weights(mean_paths, cov_paths, bound=0.05, eta=3, year=2001):
     """
-    Calculate portfolio weights using different methods.
+    Calculate portfolio weights using various combinations of mean and covariance paths.
     
     Parameters:
-    - mean_paths: Dictionary of mean file paths for each method
-    - cov_paths: Dictionary of covariance file paths for each method
-    - bound: Weight bound for optimization
-    - eta: Risk aversion parameter
-    - year: Base year for data
+    -----------
+    mean_paths : dict
+        Dictionary mapping strategy keys to paths of mean .npy files or .csv (for VW)
+    cov_paths : dict
+        Dictionary mapping strategy keys to paths of covariance .npy files
+    bound : float
+        Weight constraint for optimizer (symmetric)
+    eta : float
+        Risk aversion parameter
+    year : int
+        Year used to determine VW market value file
     
     Returns:
-    - Dictionary containing weights for different methods
+    --------
+    dict
+        Portfolio weights for all strategy combinations
     """
     results = {
-        'Diff_Emp_Method': [], 
-        'Diff_Shr_Method': [], 
-        'E_Diff_Method': [], 
-        'EW_Method': [], 
-        'VW_Method': [], 
-        'Emp_Method': [], 
-        'Shr_Method': []
+        # Real data
+        'Real Emp+Real Emp': [], 'Real Emp+Real LW': [],
+        'Real BS+Real Emp': [], 'Real BS+Real LW': [],
+        'Real OLSE+Real Emp': [], 'Real OLSE+Real LW': [],
+        # Diffusion
+        'Diff Emp+Diff Emp': [], 'Diff Emp+Diff LW': [],
+        'Diff BS+Diff Emp': [], 'Diff BS+Diff LW': [],
+        'Diff OLSE+Diff Emp': [], 'Diff OLSE+Diff LW': [],
+        # Hybrid
+        'Real Emp+Diff Emp': [], 'Diff Emp+Real Emp': [],
+        # Benchmark
+        'EW': [], 'VW': []
     }
     
-    # Diff Method
-    w_diff = calculate_objective_constrained(np.load(mean_paths['diff_emp']), np.load(cov_paths['diff_emp']), eta, -bound, bound)
-    results['Diff_Emp_Method'].append(w_diff / w_diff.sum())
-    
-    # Diff_Shr Method
-    w_diff_shr = calculate_objective_constrained(np.load(mean_paths['diff_shr']), np.load(cov_paths['diff_shr']), eta, -bound, bound)
-    results['Diff_Shr Method'].append(w_diff_shr / w_diff_shr.sum())
-    
-    # EmpDiff Method
-    w_e_diff = calculate_objective_constrained(np.load(mean_paths['e_diff']), np.load(cov_paths['e_diff']), eta, -bound, bound)
-    results['E_Diff_Method'].append(w_e_diff / w_e_diff.sum())
-    
-    # Equal Weight Method
-    n_assets = len(results['Diff_Emp_Method'][0])
-    results['EW_Method'].append(np.ones(n_assets)/n_assets)
-    
-    # Value Weight Method
-    w_vw = pd.read_csv(mean_paths['vw'], index_col=0).iloc[0, :].values
-    w_vw = w_vw / w_vw.sum()
-    w_vw[w_vw > 0.05] = 0.05
-    results['VW_Method'].append(w_vw / w_vw.sum())
-    
-    # Empirical Method
-    w_emp = calculate_objective_constrained(np.load(mean_paths['emp']), np.load(cov_paths['emp']), eta, -bound, bound)
-    results['Emp_Method'].append(w_emp / w_emp.sum())
-    
-    # Shrinkage Method
-    w_shr = calculate_objective_constrained(np.load(mean_paths['shr']), np.load(cov_paths['shr']), eta, -bound, bound)
-    results['Shr_Method'].append(w_shr / w_shr.sum())
+    def compute_and_store_weight(mean_key, cov_key, result_key):
+        mean = np.load(mean_paths[mean_key])
+        cov = np.load(cov_paths[cov_key])
+        w = calculate_objective_constrained(mean, cov, eta, -bound, bound)
+        results[result_key].append(w / w.sum())
+
+    # Real
+    compute_and_store_weight('real_emp', 'real_emp', 'Real_Emp+Real_Emp')
+    compute_and_store_weight('real_emp', 'real_lw', 'Real_Emp+Real_LW')
+    compute_and_store_weight('real_bs', 'real_emp', 'Real_BS+Real_Emp')
+    compute_and_store_weight('real_bs', 'real_lw', 'Real_BS+Real_LW')
+    compute_and_store_weight('real_olse', 'real_emp', 'Real_OLSE+Real_Emp')
+    compute_and_store_weight('real_olse', 'real_lw', 'Real_OLSE+Real_LW')
+
+    # Diffusion
+    compute_and_store_weight('diff_emp', 'diff_emp', 'Diff_Emp+Diff_Emp')
+    compute_and_store_weight('diff_emp', 'diff_lw', 'Diff_Emp+Diff_LW')
+    compute_and_store_weight('diff_bs', 'diff_emp', 'Diff_BS+Diff_Emp')
+    compute_and_store_weight('diff_bs', 'diff_lw', 'Diff_BS+Diff_LW')
+    compute_and_store_weight('diff_olse', 'diff_emp', 'Diff_OLSE+Diff_Emp')
+    compute_and_store_weight('diff_olse', 'diff_lw', 'Diff_OLSE+Diff_LW')
+
+    # Hybrid
+    compute_and_store_weight('real_emp', 'diff_emp', 'Real_Emp+Diff_Emp')
+    compute_and_store_weight('diff_emp', 'real_emp', 'Diff_Emp+Real_Emp')
+
+    # Equal Weight
+    dim = np.load(mean_paths['real_emp']).shape[0]
+    results['EW'].append(np.ones(dim) / dim)
+
+    # Value Weight
+    vw_df = pd.read_csv(mean_paths['vw'], index_col=0)
+    vw = vw_df.iloc[0, :].values
+    vw = vw / vw.sum()
+    vw[vw > 0.05] = 0.05
+    results['VW'].append(vw / vw.sum())
     
     return results
 
@@ -296,87 +317,148 @@ def calculate_portfolio_metrics(returns, weights, risk_free_data=None, transacti
     return portfolio_returns, metrics
 
 
-def test_main(start_year, end_year, test_data_path, mean_paths_template, cov_paths_template, eta=3, fee=0.002):
+def test_period(start_year, end_year, test_data_path, mean_paths_template, cov_paths_template, eta=3, fee=0.002):
     """
-    Test portfolio performance over a specified period using different methods.
-    
-    Args:
+    Test performance of a comprehensive set of real/diffusion combinations.
+
+    Parameters:
         start_year (int): Starting year for testing
         end_year (int): Ending year for testing
-        test_data_path (str): Template path for test data files, should contain {year} placeholder
-        mean_paths_template (dict): Template paths for mean files, should contain {year} placeholder
-        cov_paths_template (dict): Template paths for covariance files, should contain {year} placeholder
-        eta (float): Risk aversion parameter, default 3
-        fee (float): Transaction fee rate, default 0.002
-        
+        test_data_path (str): Template string with {year} and {next_year} placeholders
+        mean_paths_template (dict): Dict of method name -> template path for mean, with {year}
+        cov_paths_template  (dict): Dict of method name -> template path for cov, with {year}
+        eta (float): Risk aversion parameter
+        fee (float): Transaction fee rate
+
     Returns:
         tuple: (portfolio_df, metrics_df)
-            - portfolio_df: DataFrame containing daily portfolio returns
-            - metrics_df: DataFrame containing portfolio performance metrics
     """
-    # Initialize empty DataFrames for each method
-    method_dfs = {
-        'diff': pd.DataFrame(),
-        'diff_shr': pd.DataFrame(),
-        'emp_diff': pd.DataFrame(),
-        'ew': pd.DataFrame(),
-        'vw': pd.DataFrame(),
-        'emp': pd.DataFrame(),
-        'shr': pd.DataFrame()
-    }
+    # Define all method combinations
+    method_names = [
+        'Real Emp+Real Emp', 'Real Emp+Real LW', 'Real BS+Real Emp', 'Real BS+Real LW',
+        'Real OLSE+Real Emp', 'Real OLSE+Real LW',
+        'Diff Emp+Diff Emp', 'Diff Emp+Diff LW', 'Diff BS+Diff Emp', 'Diff BS+Diff LW',
+        'Diff OLSE+Diff Emp', 'Diff OLSE+Diff LW',
+        'Real Emp+Diff Emp', 'Diff Emp+Real Emp',
+        'EW', 'VW'
+    ]
+
+    final_dfs = {name: pd.DataFrame() for name in method_names}
     final_test_data = pd.DataFrame()
-    
-    # Process each year in the test period
+
     for year in range(start_year, end_year):
-        # Load and prepare test data
+        # Load test data
         test_data = pd.read_csv(
-            test_data_path.format(year=year+5, next_year=year+6),
-            index_col=0
+            test_data_path.format(year=year+5, next_year=year+6), index_col=0
         )
         test_data.index = pd.to_datetime(test_data.index)
         test_data.columns = test_data.columns.astype("int64")
         final_test_data = pd.concat([final_test_data, test_data], axis=0).fillna(0.0)
-        
-        # Format paths for the current year
+
+        # Generate actual file paths for this year
         mean_paths = {k: v.format(year=year) for k, v in mean_paths_template.items()}
         cov_paths = {k: v.format(year=year) for k, v in cov_paths_template.items()}
-        
-        # Calculate weights for each method
-        weights = calculate_all_weights(mean_paths, cov_paths, bound=0.05, eta=eta, year=year)
-        
-        # Update each method's DataFrame
-        for method, df in zip(method_dfs.keys(), weights.values()):
-            method_dfs[method] = pd.concat([method_dfs[method], df], axis=0).fillna(0.0)
-    
-    # Calculate portfolio metrics for each method
+
+        # Compute weights
+        weight_results = calculate_all_weights(
+            mean_paths, cov_paths, bound=0.05, eta=eta, year=year, df=test_data
+        )
+
+        for method_name, weight_df in zip(method_names, weight_results):
+            final_dfs[method_name] = pd.concat(
+                [final_dfs[method_name], weight_df], axis=0
+            ).fillna(0.0)
+
+    # Compute returns and metrics
     portfolio_results = []
     summary_results = []
-    for method_df in method_dfs.values():
-        portfolio_returns, metrics = calculate_portfolio_metrics(
-            final_test_data.values,
-            method_df.values,
-            transaction_fee_rate=fee,
-            eta=eta
+
+    for method_name in method_names:
+        weights_df = final_dfs[method_name]
+        returns, metrics = calculate_portfolio_metrics(
+            final_test_data.values, weights_df.values,
+            transaction_fee_rate=fee, eta=eta
         )
-        portfolio_results.append(portfolio_returns)
+
+        portfolio_results.append(returns)
         summary_results.append(metrics)
-    
-    # Create DataFrames for results
-    portfolio_index = [
-        'Diff Method',
-        'Diff_Shr Method',
-        'EmpDiff Method',
-        'EW Method',
-        'VW Method',
-        'Emp Method',
-        'Shr Method'
-    ]
-    
+
+    # Construct output DataFrames
     portfolio_df = pd.DataFrame(
-        portfolio_results,
-        index=portfolio_index,
-        columns=final_test_data.index
+        portfolio_results, index=method_names, columns=final_test_data.index
     )
-    metrics_df = pd.DataFrame(summary_results, index=portfolio_index)
-    
+    metrics_df = pd.DataFrame(summary_results, index=method_names)
+
+    print(metrics_df.to_latex(float_format="%.3f"))
     return portfolio_df, metrics_df
+
+def plot_cumulative_log_returns(portfolio_df, risk_free_path, strategy_names, 
+                                      display_names, sharpe_ratios,
+                                      figsize=(6, 4), dpi=300):
+    """
+    Plot cumulative log returns for selected portfolio strategies using Sharpe-adjusted linewidths.
+
+    Parameters:
+    -----------
+    portfolio_df : pd.DataFrame
+        DataFrame with datetime index and strategy columns
+    risk_free_path : str
+        Path to .npy file containing risk-free rate (daily)
+    strategy_names : list of str
+        List of column names in portfolio_df to plot
+    display_names : list of str
+        List of names to display in legend (must match order of strategy_names)
+    sharpe_ratios : dict
+        Dictionary mapping strategy name to its Sharpe ratio
+    figsize : tuple, optional
+        Figure size
+    dpi : int, optional
+        Figure DPI
+    """
+    plt.figure(figsize=figsize, dpi=dpi)
+
+    # Compute cumulative excess log-returns
+    rf = np.load(risk_free_path)
+    selected_returns = portfolio_df.loc[strategy_names].T
+    excess_returns = selected_returns - rf[:, np.newaxis]
+    cumulative_returns = 1 + np.log(1 + excess_returns).cumsum()
+    cumulative_returns.iloc[0, :] = 1
+
+    n_strategies = len(strategy_names)
+
+    # Use fixed colors
+    line_colors = ['C' + str(i % 10) for i in range(n_strategies)]
+    line_styles = ['-'] * n_strategies
+
+    # Normalize Sharpe ratios for linewidth (between 1 and 3)
+    sharpe_values = np.array([sharpe_ratios[name] for name in strategy_names])
+    min_sharpe, max_sharpe = sharpe_values.min(), sharpe_values.max()
+    if max_sharpe - min_sharpe > 1e-6:
+        norm_linewidths = 1 + 2 * (sharpe_values - min_sharpe) / (max_sharpe - min_sharpe)
+    else:
+        norm_linewidths = np.full_like(sharpe_values, fill_value=2.0)
+    
+    # Alpha: optional, e.g., fade lower-sharpe strategies
+    norm_alphas = 0.6 + 0.4 * (sharpe_values - min_sharpe) / (max_sharpe - min_sharpe) if max_sharpe > min_sharpe else np.ones_like(sharpe_values)
+
+    for i, name in enumerate(strategy_names):
+        plt.plot(
+            cumulative_returns[name],
+            linewidth=norm_linewidths[i],
+            linestyle=line_styles[i],
+            color=line_colors[i],
+            alpha=norm_alphas[i],
+            label=display_names[i]
+        )
+
+    ax = plt.gca()
+    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=36))
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+    plt.xticks(rotation=0, fontsize=12)
+
+    plt.legend(fontsize=10.5, loc='upper left')
+    plt.yticks(fontsize=12)
+    plt.ylabel("Cumulative Log-Return", fontsize=16)
+    plt.yticks(np.arange(0, 5, 1))
+    plt.tight_layout()
+    plt.show()
