@@ -723,7 +723,7 @@ class GaussianDiffusion(Module):
         return pred_img, x_start
 
     @torch.inference_mode()
-    def p_sample_loop(self, shape, return_all_timesteps = False):
+    def p_sample_loop(self, shape, save_timesteps = None, return_all_timesteps = False):
         batch, device = shape[0], self.device
 
         img = torch.randn(shape, device = device)
@@ -732,12 +732,29 @@ class GaussianDiffusion(Module):
         x_start = None
 
         # for t in tqdm(reversed(range(0, self.num_timesteps)), desc = 'sampling loop time step', total = self.num_timesteps):
-        for t in reversed(range(0, self.num_timesteps)):
-            self_cond = x_start if self.self_condition else None
-            img, x_start = self.p_sample(img, t, self_cond)
-            imgs.append(img)
-
-        ret = img if not return_all_timesteps else torch.stack(imgs, dim = 1)
+        if return_all_timesteps:
+            for t in reversed(range(0, self.num_timesteps)):
+                self_cond = x_start if self.self_condition else None
+                img, x_start = self.p_sample(img, t, self_cond)
+                imgs.append(img)
+                
+            ret = torch.stack(imgs, dim = 1)
+            
+        elif exists(save_timesteps):
+            for t in reversed(range(0, self.num_timesteps)):
+                self_cond = x_start if self.self_condition else None
+                img, x_start = self.p_sample(img, t, self_cond)
+                if t in save_timesteps:
+                    imgs.append(img)
+                    
+            ret = torch.stack(imgs, dim = 1)
+        
+        else:
+            for t in reversed(range(0, self.num_timesteps)):
+                self_cond = x_start if self.self_condition else None
+                img, x_start = self.p_sample(img, t, self_cond)
+            
+            ret = img
 
         ret = self.unnormalize(ret)
         return ret
@@ -786,10 +803,10 @@ class GaussianDiffusion(Module):
         return ret
 
     @torch.inference_mode()
-    def sample(self, batch_size = 16, return_all_timesteps = False):
+    def sample(self, batch_size = 16, save_timesteps = None, return_all_timesteps = False):
         (h, w), channels = self.image_size, self.channels
         sample_fn = self.p_sample_loop if not self.is_ddim_sampling else self.ddim_sample
-        return sample_fn((batch_size, channels, h, w), return_all_timesteps = return_all_timesteps)
+        return sample_fn((batch_size, channels, h, w), save_timesteps = save_timesteps, return_all_timesteps = return_all_timesteps)
 
     @torch.inference_mode()
     def interpolate(self, x1, x2, t = None, lam = 0.5):
@@ -834,8 +851,6 @@ class GaussianDiffusion(Module):
         b, c, h, w = x_start.shape
 
         noise = default(noise, lambda: torch.randn_like(x_start))
-
-        # offset noise - https://www.crosslabs.org/blog/diffusion-with-offset-noise
 
         offset_noise_strength = default(offset_noise_strength, self.offset_noise_strength)
 
@@ -885,51 +900,76 @@ class GaussianDiffusion(Module):
         img = self.normalize(img)
         return self.p_losses(img, t, *args, **kwargs)
 
+class WarmUpCosineAnnealingWarmRestarts:
+    def __init__(self, optimizer, warmup_iters=10, T_0=100, T_mult=1, eta_min=1e-6, cosine_steps=200, last_epoch=-1):
+        """
+        A learning rate scheduler that combines linear warmup, cosine annealing with restarts,
+        and a constant learning rate phase at the end.
 
-class WarmUpCosineAnnealingLR:
-    def __init__(self, optimizer, warmup_iters, T_max, eta_min, last_epoch=-1):
+        Args:
+            optimizer: The optimizer to which the scheduler will be applied.
+            warmup_iters: Number of warmup iterations.
+            T_0: Initial number of iterations for the first cosine cycle.
+            T_mult: Multiplicative factor for the length of subsequent cycles.
+            eta_min: Minimum learning rate for cosine annealing.
+            constant_steps: Number of steps to keep the learning rate constant after warmup and cosine annealing.
+            last_epoch: The index of the last epoch (default: -1).
+        """
         self.optimizer = optimizer
         self.warmup_iters = warmup_iters
-        self.T_max = T_max
+        self.T_0 = T_0
+        self.T_mult = T_mult
         self.eta_min = eta_min
         self.last_epoch = last_epoch
-        
+        self.cosine_steps = cosine_steps
+
         # Linear warmup function
         def warmup_fn(step):
             if step < self.warmup_iters:
                 return float(step) / float(max(1, self.warmup_iters))
             return 1.0
-        
+
+        # Warmup scheduler
         self.warmup_scheduler = LambdaLR(self.optimizer, lr_lambda=warmup_fn)
-        self.cosine_scheduler = CosineAnnealingLR(self.optimizer, T_max=self.T_max, eta_min=self.eta_min, last_epoch=self.last_epoch)
+        # Cosine annealing with restarts scheduler
+        self.cosine_scheduler = CosineAnnealingWarmRestarts(
+            self.optimizer, T_0=self.T_0, T_mult=self.T_mult, eta_min=self.eta_min, last_epoch=self.last_epoch
+        )
 
     def step(self, epoch=None):
-        if epoch < self.warmup_iters:
-            self.warmup_scheduler.step(epoch)
-        else:
-            self.cosine_scheduler.step(epoch)
+        """
+        Update the learning rate.
 
+        Args:
+            epoch: The current epoch (default: None).
+        """
+        if epoch is None:
+            epoch = self.last_epoch + 1
+        self.last_epoch = epoch
+
+        if epoch < self.warmup_iters:
+            # Warmup phase
+            self.warmup_scheduler.step(epoch)
+        elif epoch < self.warmup_iters + self.cosine_steps:
+            # Cosine annealing phase
+            self.cosine_scheduler.step(epoch - self.warmup_iters)
+        else:
+            # Constant learning rate phase
+            pass  # Do nothing, keep the learning rate constant
+        
 class Trainer:
     def __init__(
         self,
         diffusion_model,
         dataset,
+        optimizer,
+        scheduler,
         *,
         train_batch_size=32,
         gradient_accumulate_every=1,
-        train_lr=1e-4,
-        train_epochs=200,
+        train_epochs=10,
         ema_update_every=4,
         ema_decay=0.995,
-        adamw_betas=(0.9, 0.99),
-        adamw_weight_decay=0.01,
-        steplr_gamma=0.5,
-        gamma_decay_epoch=50,
-        cosine_scheduler=False,
-        warm_up=False,
-        warmup_iters=10,
-        T_max = 40,
-        eta_min = 1e-6,
         save_and_sample_every=10,
         num_samples=256,
         results_folder='./results',
@@ -939,7 +979,9 @@ class Trainer:
         split_batches=False,
         max_grad_norm=1.,
         num_workers=0,
-        num_eval_samples=0,
+        calculate_fid=False,
+        num_fid_samples=0,
+        save_best_and_latest_only=False
     ):
         super().__init__()
 
@@ -953,14 +995,8 @@ class Trainer:
 
         # Model and optimizer, scheduler
         self.model = diffusion_model
-        self.optimizer = AdamW(diffusion_model.parameters(), lr=train_lr, betas=adamw_betas, weight_decay=adamw_weight_decay)
-        if cosine_scheduler:
-            if warm_up:
-                self.scheduler = WarmUpCosineAnnealingLR(self.optimizer, warmup_iters, T_max=T_max, eta_min=eta_min)
-            else:
-                self.scheduler = CosineAnnealingLR(self.optimizer, T_max=T_max, eta_min=eta_min)
-        else:
-            self.scheduler = lr_scheduler.StepLR(self.optimizer, step_size=gamma_decay_epoch, gamma=steplr_gamma)
+        self.optimizer = optimizer
+        self.scheduler = scheduler
 
         # Dataloader
         self.dataloader = DataLoader(dataset, batch_size=train_batch_size, drop_last=True, shuffle=True, pin_memory=True, num_workers=num_workers)
@@ -972,7 +1008,7 @@ class Trainer:
         self.max_grad_norm = max_grad_norm
         self.save_and_sample_every = save_and_sample_every
         self.num_samples = num_samples
-        self.num_eval_samples = num_eval_samples
+        self.num_fid_samples = num_fid_samples
 
         # Model checkpoint and result saving
         self.results_folder = Path(results_folder)
@@ -993,6 +1029,23 @@ class Trainer:
         # Step counter
         self.step = 0
 
+        # FID calculation (optional)
+        self.calculate_fid = calculate_fid and self.accelerator.is_main_process
+        if self.calculate_fid:
+            from fid_evaluation import FIDEvaluation  # Assume FID module is available
+            self.fid_scorer = FIDEvaluation(
+                batch_size=train_batch_size,
+                dl=self.dataloader,
+                sampler=self.ema.ema_model,
+                channels=self.model.channels,
+                accelerator=self.accelerator,
+                stats_dir=results_folder,
+                num_fid_samples=num_fid_samples
+            )
+            self.best_fid = float("inf") if save_best_and_latest_only else None
+
+        self.save_best_and_latest_only = save_best_and_latest_only
+
         # TensorBoard logger
         self.logger = SummaryWriter(log_dir=self.checkpoint_folder)
 
@@ -1006,7 +1059,9 @@ class Trainer:
             num_batches = 0
             total_batches = len(self.dataloader)
             update_pbar_batches = total_batches  # // 2
-
+            # Update scheduler for each epoch
+            self.scheduler.step(epoch)
+            
             with tqdm(total=len(self.dataloader), desc=f"Epoch {epoch+1}/{self.train_epochs}", disable=not self.accelerator.is_main_process) as pbar:
                 for batch_idx, data in enumerate(self.dataloader):
                     data = data[0].to(device)
@@ -1043,9 +1098,6 @@ class Trainer:
                 self.logger.flush()
 
                 self.accelerator.print(f"Epoch {epoch + 1}/{self.train_epochs} completed with avg loss {avg_train_loss:.4f}")
-
-                # Update scheduler at the end of each epoch
-                self.scheduler.step(epoch)
 
                 # Save model and generate samples at the end of each epoch
                 if self.accelerator.is_main_process and (epoch + 1) % self.save_and_sample_every == 0:
@@ -1090,7 +1142,7 @@ class Trainer:
     
     def save_and_sample(self, epoch):
         # Save samples and model checkpoint at each epoch
-        if self.num_eval_samples > 0:
+        if self.num_fid_samples > 0:
             if self.ema:
                 self.ema.ema_model.eval()
                 with torch.no_grad():
@@ -1104,4 +1156,15 @@ class Trainer:
             torch.save(samples, samples_path)
 
         self.save_checkpoint(epoch)
+
+        # Calculate FID if enabled
+        if self.calculate_fid:
+            fid_score = self.fid_scorer.fid_score()
+            self.accelerator.print(f'FID Score: {fid_score}')
+
+            if self.save_best_and_latest_only:
+                if fid_score < self.best_fid:
+                    self.best_fid = fid_score
+                    self.save("best")
+                self.save("latest")
 
