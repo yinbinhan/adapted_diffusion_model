@@ -6,6 +6,8 @@ import scipy
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from sklearn.covariance import LedoitWolf
+from mosek.fusion import *
+import mosek.fusion.pythonic
 import sys
 import seaborn as sns
 import os
