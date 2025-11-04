@@ -60,6 +60,9 @@ SAVE_INTERVAL = 50        # Save checkpoint every N epochs
 # Sampling parameters
 SAMPLE_BATCHES = 128      # Number of batches to sample
 SAMPLES_PER_BATCH = 64    # Number of samples per batch
+SAVE_TIMESTEPS = [20, 40]     # Specific timesteps to save for early stopping evaluation (e.g., [100, 200, 500])
+                          # Set to None to save only final denoised samples
+                          # Set to a list like [100, 200, 500] to save samples at those timesteps
 
 # Mixed precision settings
 USE_AMP = True            # Mixed precision training
