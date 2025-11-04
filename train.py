@@ -39,7 +39,7 @@ def get_dim_mults_for_size(height, width):
     else:
         return config.DIM_MULTS_MINIMAL # Minimal case
 
-def train_model(data_path, seed=None, num_samples=None, gpu_id=0, epochs=None):
+def train_model(data_path, seed=None, num_samples=None, gpu_id=0, epochs=None, save_timesteps=None):
     """
     Train the diffusion model using a specific data file
     
@@ -49,9 +49,15 @@ def train_model(data_path, seed=None, num_samples=None, gpu_id=0, epochs=None):
         num_samples: Number of training samples to use (None = use all)
         gpu_id: GPU ID to use
         epochs: Number of epochs to train (None = use config.EPOCHS)
+        save_timesteps: List of specific timesteps to save during sampling for early stopping evaluation 
+                       (None = use config.SAVE_TIMESTEPS, which defaults to None meaning save only final result)
     """
     # Set GPU
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    
+    # Use config default if save_timesteps not specified
+    if save_timesteps is None:
+        save_timesteps = config.SAVE_TIMESTEPS
     
     # Set seed and get timestamp for experiment ID
     seed = config.set_seed(seed)
@@ -154,7 +160,7 @@ def train_model(data_path, seed=None, num_samples=None, gpu_id=0, epochs=None):
     
     print("Diffusion process initialized")
     
-    # Initialize Trainer with custom epochs
+    # Initialize Trainer with custom epochs and optional save_timesteps for early stopping
     trainer = Trainer(
         diffusion,
         dataset,
@@ -174,6 +180,7 @@ def train_model(data_path, seed=None, num_samples=None, gpu_id=0, epochs=None):
         results_folder=model_dir,
         param_path="",
         amp=config.USE_AMP,
+        save_timesteps=save_timesteps,  # Pass save_timesteps for early stopping evaluation
     )
     
     print("Trainer initialized")
@@ -190,7 +197,8 @@ def train_model(data_path, seed=None, num_samples=None, gpu_id=0, epochs=None):
     config.set_seed(seed)  # Reset seed for reproducibility
     
     for i in range(sample_batches):
-        samples = diffusion.sample(batch_size=samples_per_batch)
+        # Pass save_timesteps parameter to sample method for early stopping evaluation
+        samples = diffusion.sample(batch_size=samples_per_batch, save_timesteps=save_timesteps)
         samples = samples.view(samples.size(0), -1).cpu().numpy()
         
         sample_file = os.path.join(sample_dir, f"sample_batch{i+1}.npy")
@@ -222,7 +230,9 @@ if __name__ == "__main__":
                       help="GPU ID")
     parser.add_argument("--epochs", type=int, default=None, 
                       help="Number of epochs to train (None = use config value)")
+    parser.add_argument("--save_timesteps", type=int, nargs='+', default=None,
+                      help="Specific timesteps to save during sampling for early stopping evaluation (e.g., --save_timesteps 100 200 500)")
     
     args = parser.parse_args()
     
-    train_model(args.data_path, args.seed, args.num_samples, args.gpu, args.epochs) 
+    train_model(args.data_path, args.seed, args.num_samples, args.gpu, args.epochs, args.save_timesteps) 
