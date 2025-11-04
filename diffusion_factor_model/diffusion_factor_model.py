@@ -724,15 +724,31 @@ class GaussianDiffusion(Module):
 
     @torch.inference_mode()
     def p_sample_loop(self, shape, save_timesteps = None, return_all_timesteps = False):
+        """
+        Perform the reverse diffusion sampling loop.
+        
+        Args:
+            shape: Shape of the images to generate (batch_size, channels, height, width)
+            save_timesteps: List/set of specific timesteps to save for early stopping evaluation. 
+                          If provided, only saves samples at these exact timesteps (no initial noise).
+                          Useful for evaluating model quality at intermediate denoising steps.
+            return_all_timesteps: If True, returns samples from all timesteps (for visualization/debugging)
+        
+        Returns:
+            Generated samples. Shape depends on settings:
+            - If save_timesteps: (batch, num_specified_timesteps, channels, height, width)
+            - If return_all_timesteps: (batch, num_timesteps+1, channels, height, width) - includes initial noise
+            - Otherwise: (batch, channels, height, width)
+        """
         batch, device = shape[0], self.device
 
         img = torch.randn(shape, device = device)
-        imgs = [img]
-
         x_start = None
 
         # for t in tqdm(reversed(range(0, self.num_timesteps)), desc = 'sampling loop time step', total = self.num_timesteps):
         if return_all_timesteps:
+            # Save samples from all timesteps for visualization or analysis
+            imgs = [img]  # Include initial noise
             for t in reversed(range(0, self.num_timesteps)):
                 self_cond = x_start if self.self_condition else None
                 img, x_start = self.p_sample(img, t, self_cond)
@@ -741,6 +757,9 @@ class GaussianDiffusion(Module):
             ret = torch.stack(imgs, dim = 1)
             
         elif exists(save_timesteps):
+            # Save only specified timesteps for early stopping evaluation
+            # Only saves the exact timesteps requested, no initial noise
+            imgs = []
             for t in reversed(range(0, self.num_timesteps)):
                 self_cond = x_start if self.self_condition else None
                 img, x_start = self.p_sample(img, t, self_cond)
@@ -750,6 +769,7 @@ class GaussianDiffusion(Module):
             ret = torch.stack(imgs, dim = 1)
         
         else:
+            # Default: only return the final fully denoised sample
             for t in reversed(range(0, self.num_timesteps)):
                 self_cond = x_start if self.self_condition else None
                 img, x_start = self.p_sample(img, t, self_cond)
@@ -760,7 +780,24 @@ class GaussianDiffusion(Module):
         return ret
 
     @torch.inference_mode()
-    def ddim_sample(self, shape, return_all_timesteps = False):
+    def ddim_sample(self, shape, save_timesteps = None, return_all_timesteps = False):
+        """
+        Perform DDIM (Denoising Diffusion Implicit Models) sampling for faster generation.
+        
+        Args:
+            shape: Shape of the images to generate (batch_size, channels, height, width)
+            save_timesteps: Optional list/set of specific timesteps to save for early stopping evaluation.
+                          Only saves samples at these exact timesteps (no initial noise).
+                          Example: [100, 200, 500] will save samples at only these three timesteps.
+            return_all_timesteps: If True, returns samples from all sampling timesteps (for analysis/debugging).
+                                 Takes precedence over save_timesteps if both are provided.
+        
+        Returns:
+            Generated samples with shape:
+            - If save_timesteps: (batch_size, num_specified_timesteps, channels, height, width)
+            - If return_all_timesteps: (batch_size, num_sampling_steps+1, channels, height, width) - includes initial noise
+            - Otherwise: (batch_size, channels, height, width)
+        """
         batch, device, total_timesteps, sampling_timesteps, eta, objective = shape[0], self.device, self.num_timesteps, self.sampling_timesteps, self.ddim_sampling_eta, self.objective
 
         times = torch.linspace(-1, total_timesteps - 1, steps = sampling_timesteps + 1)   # [-1, 0, 1, 2, ..., T-1] when sampling_timesteps == total_timesteps
@@ -768,42 +805,120 @@ class GaussianDiffusion(Module):
         time_pairs = list(zip(times[:-1], times[1:])) # [(T-1, T-2), (T-2, T-3), ..., (1, 0), (0, -1)]
 
         img = torch.randn(shape, device = device)
-        imgs = [img]
-
         x_start = None
 
-        #for time, time_next in tqdm(time_pairs, desc = 'sampling loop time step'):
-        for time, time_next in time_pairs:
-            time_cond = torch.full((batch,), time, device = device, dtype = torch.long)
-            self_cond = x_start if self.self_condition else None
-            pred_noise, x_start, *_ = self.model_predictions(img, time_cond, self_cond, clip_x_start = True, rederive_pred_noise = True)
+        # Determine whether to save all timesteps or specific timesteps for early stopping
+        if return_all_timesteps:
+            # Save all sampling timesteps including initial noise
+            imgs = [img]
+            #for time, time_next in tqdm(time_pairs, desc = 'sampling loop time step'):
+            for time, time_next in time_pairs:
+                time_cond = torch.full((batch,), time, device = device, dtype = torch.long)
+                self_cond = x_start if self.self_condition else None
+                pred_noise, x_start, *_ = self.model_predictions(img, time_cond, self_cond, clip_x_start = True, rederive_pred_noise = True)
 
-            if time_next < 0:
-                img = x_start
+                if time_next < 0:
+                    img = x_start
+                    imgs.append(img)
+                    continue
+
+                alpha = self.alphas_cumprod[time]
+                alpha_next = self.alphas_cumprod[time_next]
+
+                sigma = eta * ((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)).sqrt()
+                c = (1 - alpha_next - sigma ** 2).sqrt()
+
+                noise = torch.randn_like(img)
+
+                img = x_start * alpha_next.sqrt() + \
+                      c * pred_noise + \
+                      sigma * noise
+
                 imgs.append(img)
-                continue
+                
+            ret = torch.stack(imgs, dim = 1)
+            
+        elif exists(save_timesteps):
+            # Save only specified timesteps for early stopping evaluation
+            # Only saves the exact timesteps requested, no initial noise
+            imgs = []
+            for time, time_next in time_pairs:
+                time_cond = torch.full((batch,), time, device = device, dtype = torch.long)
+                self_cond = x_start if self.self_condition else None
+                pred_noise, x_start, *_ = self.model_predictions(img, time_cond, self_cond, clip_x_start = True, rederive_pred_noise = True)
 
-            alpha = self.alphas_cumprod[time]
-            alpha_next = self.alphas_cumprod[time_next]
+                if time_next < 0:
+                    img = x_start
+                    if time in save_timesteps:
+                        imgs.append(img)
+                    continue
 
-            sigma = eta * ((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)).sqrt()
-            c = (1 - alpha_next - sigma ** 2).sqrt()
+                alpha = self.alphas_cumprod[time]
+                alpha_next = self.alphas_cumprod[time_next]
 
-            noise = torch.randn_like(img)
+                sigma = eta * ((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)).sqrt()
+                c = (1 - alpha_next - sigma ** 2).sqrt()
 
-            img = x_start * alpha_next.sqrt() + \
-                  c * pred_noise + \
-                  sigma * noise
+                noise = torch.randn_like(img)
 
-            imgs.append(img)
+                img = x_start * alpha_next.sqrt() + \
+                      c * pred_noise + \
+                      sigma * noise
 
-        ret = img if not return_all_timesteps else torch.stack(imgs, dim = 1)
+                if time in save_timesteps:
+                    imgs.append(img)
+                    
+            ret = torch.stack(imgs, dim = 1)
+        
+        else:
+            # Default: only return the final denoised sample
+            for time, time_next in time_pairs:
+                time_cond = torch.full((batch,), time, device = device, dtype = torch.long)
+                self_cond = x_start if self.self_condition else None
+                pred_noise, x_start, *_ = self.model_predictions(img, time_cond, self_cond, clip_x_start = True, rederive_pred_noise = True)
+
+                if time_next < 0:
+                    img = x_start
+                    continue
+
+                alpha = self.alphas_cumprod[time]
+                alpha_next = self.alphas_cumprod[time_next]
+
+                sigma = eta * ((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)).sqrt()
+                c = (1 - alpha_next - sigma ** 2).sqrt()
+
+                noise = torch.randn_like(img)
+
+                img = x_start * alpha_next.sqrt() + \
+                      c * pred_noise + \
+                      sigma * noise
+            
+            ret = img
 
         ret = self.unnormalize(ret)
         return ret
 
     @torch.inference_mode()
     def sample(self, batch_size = 16, save_timesteps = None, return_all_timesteps = False):
+        """
+        Generate samples from the diffusion model.
+        
+        Args:
+            batch_size: Number of samples to generate
+            save_timesteps: Optional list/set of specific timesteps to save during the reverse diffusion process.
+                          This is useful for early stopping evaluation - you can specify timesteps like [100, 200, 500]
+                          to save intermediate denoising results at only those exact timesteps.
+                          No initial noise is saved, only the specified timesteps.
+                          If None, only returns the final fully denoised samples.
+            return_all_timesteps: If True, returns samples from all timesteps including initial noise (for visualization/debugging).
+                                 Takes precedence over save_timesteps if both are provided.
+        
+        Returns:
+            Generated samples with shape:
+            - (batch_size, channels, height, width) if save_timesteps is None and return_all_timesteps is False
+            - (batch_size, len(save_timesteps), channels, height, width) if save_timesteps is provided
+            - (batch_size, num_timesteps+1, channels, height, width) if return_all_timesteps is True
+        """
         (h, w), channels = self.image_size, self.channels
         sample_fn = self.p_sample_loop if not self.is_ddim_sampling else self.ddim_sample
         return sample_fn((batch_size, channels, h, w), save_timesteps = save_timesteps, return_all_timesteps = return_all_timesteps)
@@ -981,7 +1096,8 @@ class Trainer:
         num_workers=0,
         calculate_fid=False,
         num_fid_samples=0,
-        save_best_and_latest_only=False
+        save_best_and_latest_only=False,
+        save_timesteps=None  # Specific timesteps to save for early stopping evaluation
     ):
         super().__init__()
 
@@ -1009,6 +1125,7 @@ class Trainer:
         self.save_and_sample_every = save_and_sample_every
         self.num_samples = num_samples
         self.num_fid_samples = num_fid_samples
+        self.save_timesteps = save_timesteps  # Store timesteps for early stopping evaluation
 
         # Model checkpoint and result saving
         self.results_folder = Path(results_folder)
@@ -1146,10 +1263,12 @@ class Trainer:
             if self.ema:
                 self.ema.ema_model.eval()
                 with torch.no_grad():
-                    samples = self.ema.ema_model.sample(self.num_new_samples)
+                    # Pass save_timesteps parameter for early stopping evaluation
+                    samples = self.ema.ema_model.sample(self.num_new_samples, save_timesteps=self.save_timesteps)
             else:
                 with torch.no_grad():
-                    samples = self.model.sample(self.num_new_samples)
+                    # Pass save_timesteps parameter for early stopping evaluation
+                    samples = self.model.sample(self.num_new_samples, save_timesteps=self.save_timesteps)
             
             samples_path = self.checkpoint_folder / f"fid_samples-epoch-{epoch+1}.pt"
             
