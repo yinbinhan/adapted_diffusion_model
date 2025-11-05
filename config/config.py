@@ -21,16 +21,16 @@ os.makedirs(SAMPLES_DIR, exist_ok=True)
 EXP_PREFIX = "dfm"  # Prefix for experiment IDs
 
 # Core settings
-SEED = 1234
+SEED = 3407
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 # Model parameters
-MODEL_DIM = 128            # Base dimension for U-Net
+MODEL_DIM = 256            # Base dimension for U-Net
 MODEL_CHANNELS = 1        # Number of channels in input data
 MODEL_FILTER_SIZE = 7     # Filter size for convolutions
 
 # Dimension multipliers for different input sizes
-DIM_MULTS_LARGE = (1, 2, 4, 16)     # For inputs where min_dim >= 32
+DIM_MULTS_LARGE = (1, 2, 4, 8)     # For inputs where min_dim >= 32
 DIM_MULTS_MEDIUM = (1, 2, 4)       # For inputs where min_dim >= 16
 DIM_MULTS_SMALL = (1, 2)           # For inputs where min_dim >= 8
 DIM_MULTS_TINY = (1, 2)            # For inputs where min_dim >= 4
@@ -43,24 +43,24 @@ BETA_SCHEDULE = 'cosine'
 AUTO_NORMALIZE = False
 
 # Training parameters
-BATCH_SIZE = 128
+BATCH_SIZE = 32
 LEARNING_RATE = 1e-4
-EPOCHS = 300
+EPOCHS = 600
 WEIGHT_DECAY = 0.01
 USE_COSINE_SCHEDULER = True
 USE_WARM_UP = True
 WARMUP_STEPS = 10
-COSINE_CYCLE_LENGTH = 40  # T_MAX
-COSINE_LR_MIN = 1e-6      # ETA_MIN
+COSINE_CYCLE_LENGTH = 400  # T_MAX
+COSINE_LR_MIN = 5e-5      # ETA_MIN
 GRADIENT_ACCUMULATION = 1
 EMA_DECAY = 0.999
 SPLIT_BATCHES = False
-SAVE_INTERVAL = 50        # Save checkpoint every N epochs
+SAVE_INTERVAL = 100        # Save checkpoint every N epochs
 
 # Sampling parameters
 SAMPLE_BATCHES = 128      # Number of batches to sample
 SAMPLES_PER_BATCH = 64    # Number of samples per batch
-SAVE_TIMESTEPS = [20, 40]     # Specific timesteps to save for early stopping evaluation (e.g., [100, 200, 500])
+SAVE_TIMESTEPS = [20]     # Specific timesteps to save for early stopping evaluation (e.g., [100, 200, 500])
                           # Set to None to save only final denoised samples
                           # Set to a list like [100, 200, 500] to save samples at those timesteps
 
