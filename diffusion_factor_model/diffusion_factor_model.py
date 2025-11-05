@@ -25,7 +25,7 @@ from einops.layers.torch import Rearrange
 
 from scipy.optimize import linear_sum_assignment
 import torch.optim.lr_scheduler as lr_scheduler
-from torch.optim.lr_scheduler import LambdaLR, CosineAnnealingLR
+from torch.optim.lr_scheduler import LambdaLR, CosineAnnealingLR, CosineAnnealingWarmRestarts
 
 from PIL import Image
 from tqdm.auto import tqdm
@@ -1077,9 +1077,16 @@ class Trainer:
         self,
         diffusion_model,
         dataset,
-        optimizer,
-        scheduler,
+        optimizer=None,
+        scheduler=None,
         *,
+        train_lr=1e-4,
+        adamw_weight_decay=0.01,
+        cosine_scheduler=True,
+        warm_up=True,
+        warmup_iters=10,
+        T_max=40,
+        eta_min=1e-6,
         train_batch_size=32,
         gradient_accumulate_every=1,
         train_epochs=10,
@@ -1111,8 +1118,37 @@ class Trainer:
 
         # Model and optimizer, scheduler
         self.model = diffusion_model
-        self.optimizer = optimizer
-        self.scheduler = scheduler
+        
+        # Create optimizer if not provided
+        if optimizer is None:
+            self.optimizer = AdamW(diffusion_model.parameters(), lr=train_lr, weight_decay=adamw_weight_decay)
+        else:
+            self.optimizer = optimizer
+        
+        # Create scheduler if not provided
+        if scheduler is None:
+            if cosine_scheduler and warm_up:
+                # Use warm-up + cosine annealing with restarts
+                self.scheduler = WarmUpCosineAnnealingWarmRestarts(
+                    self.optimizer, 
+                    warmup_iters=warmup_iters,
+                    T_0=T_max,
+                    T_mult=1,
+                    eta_min=eta_min,
+                    cosine_steps=train_epochs * 10  # Adjust based on total training steps
+                )
+            elif cosine_scheduler:
+                # Use cosine annealing without warm-up
+                self.scheduler = CosineAnnealingLR(
+                    self.optimizer,
+                    T_max=T_max,
+                    eta_min=eta_min
+                )
+            else:
+                # Use constant learning rate (identity scheduler)
+                self.scheduler = LambdaLR(self.optimizer, lr_lambda=lambda epoch: 1.0)
+        else:
+            self.scheduler = scheduler
 
         # Dataloader
         self.dataloader = DataLoader(dataset, batch_size=train_batch_size, drop_last=True, shuffle=True, pin_memory=True, num_workers=num_workers)
