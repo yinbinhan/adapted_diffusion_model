@@ -86,8 +86,8 @@ def train_model(data_path, seed=None, num_samples=None, gpu_id=0, epochs=None, s
         samples, features = data_shape
         
         # Try to make the image as square as possible
-        height = int(np.sqrt(features))
-        width = features // height
+        width = 2**(int(np.log2(features)) // 2)
+        height = features // height
         
         if height * width != features:
             # If not perfectly divisible, use a simple reshape
