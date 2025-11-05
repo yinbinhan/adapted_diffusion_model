@@ -10,7 +10,7 @@ import gc
 import argparse
 import time
 
-from diffusion_factor_model import Unet, GaussianDiffusion, Trainer
+from diffusion_factor_model.diffusion_factor_model import Unet, GaussianDiffusion, Trainer
 import config.config as config
 
 def get_dim_mults_for_size(height, width):
@@ -87,7 +87,7 @@ def train_model(data_path, seed=None, num_samples=None, gpu_id=0, epochs=None, s
         
         # Try to make the image as square as possible
         width = 2**(int(np.log2(features)) // 2)
-        height = features // height
+        height = features // width
         
         if height * width != features:
             # If not perfectly divisible, use a simple reshape
@@ -203,7 +203,7 @@ def train_model(data_path, seed=None, num_samples=None, gpu_id=0, epochs=None, s
         # Pass save_timesteps parameter to sample method for early stopping evaluation
         samples = diffusion.sample(batch_size=samples_per_batch, save_timesteps=save_timesteps)
         samples = samples.view(samples.size(0), -1).cpu().numpy()
-        samples = samples * data_std + data_mean
+        samples = samples * data_std.view(-1).cpu().numpy() + data_mean.view(-1).cpu().numpy()
         
         sample_file = os.path.join(sample_dir, f"sample_batch{i+1}.npy")
         np.save(sample_file, samples)
