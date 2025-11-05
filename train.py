@@ -128,6 +128,9 @@ def train_model(data_path, seed=None, num_samples=None, gpu_id=0, epochs=None, s
     os.makedirs(sample_dir, exist_ok=True)
     
     # Create dataset
+    data_mean = data.mean(dim=0, keepdim=True)[0]
+    data_std = data.std(dim=0, keepdim=True)[0]
+    data = (data - data_mean) / data_std
     dataset = TensorDataset(data)
     
     # Calculate latent dimension (total number of features)
@@ -200,6 +203,7 @@ def train_model(data_path, seed=None, num_samples=None, gpu_id=0, epochs=None, s
         # Pass save_timesteps parameter to sample method for early stopping evaluation
         samples = diffusion.sample(batch_size=samples_per_batch, save_timesteps=save_timesteps)
         samples = samples.view(samples.size(0), -1).cpu().numpy()
+        samples = samples * data_std + data_mean
         
         sample_file = os.path.join(sample_dir, f"sample_batch{i+1}.npy")
         np.save(sample_file, samples)
