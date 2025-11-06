@@ -30,9 +30,9 @@ MODEL_CHANNELS = 1        # Number of channels in input data
 MODEL_FILTER_SIZE = 7     # Filter size for convolutions
 
 # Dimension multipliers for different input sizes
-DIM_MULTS_LARGE = (1, 2, 4, 8)     # For inputs where min_dim >= 32
-DIM_MULTS_MEDIUM = (1, 2, 4)       # For inputs where min_dim >= 16
-DIM_MULTS_SMALL = (1, 2)           # For inputs where min_dim >= 8
+DIM_MULTS_LARGE = (1, 2, 4, 16)     # For inputs where min_dim >= 32
+DIM_MULTS_MEDIUM = (1, 2, 4, 8)       # For inputs where min_dim >= 16
+DIM_MULTS_SMALL = (1, 2, 4)           # For inputs where min_dim >= 8
 DIM_MULTS_TINY = (1, 2)            # For inputs where min_dim >= 4
 DIM_MULTS_MINIMAL = (1,)           # For very small inputs
 
