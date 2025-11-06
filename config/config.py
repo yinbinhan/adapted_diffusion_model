@@ -50,16 +50,18 @@ WEIGHT_DECAY = 0.01
 USE_COSINE_SCHEDULER = True
 USE_WARM_UP = True
 WARMUP_STEPS = 10
-COSINE_CYCLE_LENGTH = 400  # T_MAX
-COSINE_LR_MIN = 5e-5      # ETA_MIN
+COSINE_CYCLE_LENGTH = 400  # T_0 (initial cycle length)
+T_MULT = 1                 # T_mult for scheduler
+COSINE_STEPS = 400         # Cosine annealing steps (same as T_0 by default)
+COSINE_LR_MIN = 5e-05      # ETA_MIN
 GRADIENT_ACCUMULATION = 1
 EMA_DECAY = 0.999
 SPLIT_BATCHES = False
-SAVE_INTERVAL = 100        # Save checkpoint every N epochs
+SAVE_INTERVAL = 1000       # Save checkpoint every N epochs
 
 # Sampling parameters
-SAMPLE_BATCHES = 128      # Number of batches to sample
-SAMPLES_PER_BATCH = 64    # Number of samples per batch
+SAMPLE_BATCHES = 64       # Number of batches to sample
+SAMPLES_PER_BATCH = 128   # Number of samples per batch
 SAVE_TIMESTEPS = [20]     # Specific timesteps to save for early stopping evaluation (e.g., [100, 200, 500])
                           # Set to None to save only final denoised samples
                           # Set to a list like [100, 200, 500] to save samples at those timesteps
