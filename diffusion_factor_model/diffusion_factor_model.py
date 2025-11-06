@@ -1085,8 +1085,10 @@ class Trainer:
         cosine_scheduler=True,
         warm_up=True,
         warmup_iters=10,
-        T_max=40,
+        T_0=40,
+        T_mult=1,
         eta_min=1e-6,
+        cosine_steps=None,
         train_batch_size=32,
         gradient_accumulate_every=1,
         train_epochs=10,
@@ -1121,7 +1123,7 @@ class Trainer:
         
         # Create optimizer if not provided
         if optimizer is None:
-            self.optimizer = AdamW(diffusion_model.parameters(), lr=train_lr, weight_decay=adamw_weight_decay)
+            self.optimizer = AdamW(diffusion_model.parameters(), lr=train_lr, betas=(0.9, 0.99), weight_decay=adamw_weight_decay)
         else:
             self.optimizer = optimizer
         
@@ -1129,19 +1131,22 @@ class Trainer:
         if scheduler is None:
             if cosine_scheduler and warm_up:
                 # Use warm-up + cosine annealing with restarts
+                # If cosine_steps not provided, use T_0 as fallback
+                if cosine_steps is None:
+                    cosine_steps = T_0
                 self.scheduler = WarmUpCosineAnnealingWarmRestarts(
                     self.optimizer, 
                     warmup_iters=warmup_iters,
-                    T_0=T_max,
-                    T_mult=1,
+                    T_0=T_0,
+                    T_mult=T_mult,
                     eta_min=eta_min,
-                    cosine_steps=train_epochs * 10  # Adjust based on total training steps
+                    cosine_steps=cosine_steps
                 )
             elif cosine_scheduler:
                 # Use cosine annealing without warm-up
                 self.scheduler = CosineAnnealingLR(
                     self.optimizer,
-                    T_max=T_max,
+                    T_max=T_0,
                     eta_min=eta_min
                 )
             else:
