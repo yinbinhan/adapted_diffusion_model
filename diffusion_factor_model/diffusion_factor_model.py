@@ -450,7 +450,7 @@ def linear_beta_schedule(timesteps):
     beta_end = scale * 0.02
     return torch.linspace(beta_start, beta_end, timesteps, dtype = torch.float64)
 
-def cosine_beta_schedule(timesteps, s = 0.008):
+def cosine_beta_schedule(timesteps, s = 10):
     """
     cosine schedule
     as proposed in https://openreview.net/forum?id=-NEXDKk8gZ
