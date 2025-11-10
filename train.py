@@ -12,6 +12,7 @@ import time
 
 from diffusion_factor_model.diffusion_factor_model import Unet, GaussianDiffusion, Trainer
 import config.config as config
+from DiT import DiT
 
 def get_dim_mults_for_size(height, width):
     """
@@ -140,15 +141,31 @@ def train_model(data_path, seed=None, num_samples=None, gpu_id=0, epochs=None, s
     if epochs is None:
         epochs = config.EPOCHS
     
-    # Initialize model with appropriate dimension multipliers
-    model = Unet(
-        dim=config.MODEL_DIM,
-        channels=config.MODEL_CHANNELS,
-        filter_size=config.MODEL_FILTER_SIZE,
-        dim_mults=dim_mults  # Use appropriate multipliers for this input size
-    )
+
     
-    print("Model initialized")
+    # # Initialize model with appropriate dimension multipliers
+    if args.backbone == "unet":
+        model = Unet(
+            dim=config.MODEL_DIM,
+            channels=config.MODEL_CHANNELS,
+            filter_size=config.MODEL_FILTER_SIZE,
+            dim_mults=dim_mults  # Use appropriate multipliers for this input size
+        )
+    else:
+        model = DiT(
+            input_size=(height, width),
+            patch_size=2,
+            in_channels=1,
+            hidden_size=256,
+            depth=12,
+            num_heads=8,
+            class_dropout_prob=0.0,
+            num_classes=1,
+            learn_sigma=False,
+        )
+
+    
+    print("Model initialized" + args.backbone)
     
     # Initialize diffusion process with proper image size
     diffusion = GaussianDiffusion(
@@ -238,6 +255,8 @@ if __name__ == "__main__":
                       help="Number of epochs to train (None = use config value)")
     parser.add_argument("--save_timesteps", type=int, nargs='+', default=None,
                       help="Specific timesteps to save during sampling for early stopping evaluation (e.g., --save_timesteps 100 200 500)")
+    parser.add_argument("--backbone", type=str, default="unet",
+                    choices=["unet", "dit"], help="Model backbone")
     
     args = parser.parse_args()
     
