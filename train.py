@@ -156,16 +156,21 @@ def train_model(data_path, seed=None, num_samples=None, gpu_id=0, epochs=None, s
             input_size=(height, width),
             patch_size=2,
             in_channels=1,
-            hidden_size=256,
-            depth=12,
-            num_heads=8,
+            hidden_size=1024,
+            depth=24,
+            num_heads=16,
             class_dropout_prob=0.0,
             num_classes=1,
             learn_sigma=False,
         )
-
+    
     
     print("Model initialized" + args.backbone)
+
+    # print number of parameters
+    n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Total trainable parameters: {n_params/1e6:.2f}M")
+    
     
     # Initialize diffusion process with proper image size
     diffusion = GaussianDiffusion(

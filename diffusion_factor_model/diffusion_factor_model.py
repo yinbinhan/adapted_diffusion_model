@@ -536,13 +536,13 @@ class GaussianDiffusion(Module):
         immiscible = False
     ):
         super().__init__()
-        assert not (type(self) == GaussianDiffusion and model.channels != model.out_dim)
+        # assert not (type(self) == GaussianDiffusion and model.channels != model.out_dim)
         assert not hasattr(model, 'random_or_learned_sinusoidal_cond') or not model.random_or_learned_sinusoidal_cond
 
         self.model = model
 
-        self.channels = self.model.channels
-        self.self_condition = self.model.self_condition
+        self.channels = self.model.in_channels
+        self.self_condition = False
 
         if isinstance(image_size, int):
             image_size = (image_size, image_size)
@@ -1234,7 +1234,7 @@ class Trainer:
 
                     # Update model parameters after accumulating `gradient_accumulate_every` batches
                     if (batch_idx + 1) % self.gradient_accumulate_every == 0:
-                        self.accelerator.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+                        norm = self.accelerator.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
                         self.optimizer.step()
                         self.optimizer.zero_grad()
 
@@ -1253,6 +1253,7 @@ class Trainer:
                 avg_train_loss = total_loss / num_batches
 
                 self.logger.add_scalar('Train/Average Loss', avg_train_loss, epoch)
+                self.logger.add_scalar('Train/GradNorm', norm, epoch)
                 self.logger.flush()
 
                 self.accelerator.print(f"Epoch {epoch + 1}/{self.train_epochs} completed with avg loss {avg_train_loss:.4f}")
