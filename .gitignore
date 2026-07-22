@@ -195,3 +195,9 @@ samples/
 DiT.py
 
 /eval
+# LLM/agent context (local-only)
+AGENTS.md
+CLAUDE.md
+JOURNAL_*.md
+HANDOFF.md
+.codex/
