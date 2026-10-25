@@ -1,5 +1,7 @@
 # Sequential Diffusion Model
 
+Official implementation of the paper: [Diffusion Models for Adaptive Sequential Data Generation](https://arxiv.org/abs/2606.06007)
+
 <!-- <p align="center">
   <img src="assets/demo.png" alt="Diffusion Factor Model demo" width="700"/>
 </p> -->
@@ -157,3 +159,16 @@ Evaluation utilities live in `eval/`, including:
   year={2025}
 }
 ``` -->
+
+## Citation
+
+If you find this code useful, please cite:
+
+```bibtex
+@article{cao2026diffusion,
+  title={Diffusion Models for Adaptive Sequential Data Generation},
+  author={Cao, Haoyang and Chen, Minshuo and Han, Yinbin and Xu, Renyuan},
+  journal={arXiv preprint arXiv:2606.06007},
+  year={2026}
+}
+```
